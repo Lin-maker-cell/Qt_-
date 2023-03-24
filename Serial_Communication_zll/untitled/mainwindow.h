@@ -22,14 +22,20 @@ public:
 
     // 串口功能
     void SerialPortInit();                      // 串口初始化（参数配置）
+    void SerialGet();
+    void PermissionSetting();
+    void ConnectFun();
     void RefreshSerialPort(int index);          // 刷新串口
     QByteArray QString2Hex(QString hexStr);
     char ConvertHexChar(char c);
+    void DataAnalysis(QString hexData);
+    void WrongData2Text(QString hexData);
+    void RightData2Table(QString hexData);
+    void SerialParameterConfiguration();
+
+
 
 private slots:
-    // 串口槽函数
-    void on_OpenSerialButton_clicked();         // 串口开关
-
     void on_PortBox_activated(const QString &arg1);
 
 private:
@@ -44,5 +50,6 @@ private:
     QStringList     stopBitsList;                       //停止位
     QStringList     flowControlList;                    //控制流
     QStringList     portName;
+    QByteArray      dataReceived;
 };
 #endif // MAINWINDOW_H
