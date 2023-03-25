@@ -19,11 +19,12 @@ MainWindow::~MainWindow()
 
 void MainWindow::SerialPortInit()
 {
-    dataReceived.clear();// 清空字节数组
-    serial = new QSerialPort;//申请内存,并设置父对象
+    rawData.clear();// 清空 QStringList 对象中的内容
+    serial = new QSerialPort;// 申请内存,并设置父对象
     SerialGet();// 获取计算机中有效的端口号，然后将端口号的名称给端口选择控件
+    ui->OpenSerialButton->setText("打开串口");
     SerialParameterConfiguration();// 参数配置
-    PermissionSetting();//权限设置
+    PermissionSetting();// 权限设置
     ConnectFun();// 信号
 }
 // 获取串口
@@ -66,27 +67,55 @@ void MainWindow::PermissionSetting()
     ui->DataSend->setReadOnly(true);// 发送窗口默认只读权限
     ui->DataReceived->setReadOnly(true);// 接收窗口默认只读权限
     ui->m_errorInstruction->setReadOnly(true);// 错误指令存储窗口默认只读模式
-    // 表格默认只读模式
+    ui->m_rightInstruction->setEditTriggers(QAbstractItemView::NoEditTriggers);// 表格默认只读模式
+}
+// 确保其他串口都已经关闭
+void MainWindow::CheckSerial(QString str)
+{
+    for (int i = 0; i < portName.size(); i++) {
+        if (portName[i] != str) {
+            serial->setPortName(portName[i]);
+            if (serial->isOpen()) {
+                serial->clear();
+                serial->close();
+            }
+        }
+    }
+}
+
+void MainWindow::PermissionUpdate(bool select)
+{
+    ui->BaudBox->setDisabled(select);
+    ui->ParityBox->setDisabled(select);
+    ui->BitBox->setDisabled(select);
+    ui->StopBox->setDisabled(select);
+    ui->ControlBox->setDisabled(select);
+    ui->SendEditBtn1->setDisabled(!select);
+    if (select) {
+        ui->OpenSerialButton->setText("关闭串口");
+    }
+    else {
+        ui->OpenSerialButton->setText("打开串口");
+    }
 }
 // 所有控件的 connect 函数
 void MainWindow::ConnectFun()
 {
-    connect(serial, &QSerialPort::readyRead, this, [&](){   // 接收数据
-        QByteArray data = serial->readAll();           // 读取数据
-
-        DataAnalysis(data.toHex(' ')); // 解析收到的指令
-        if(!data.isEmpty()) // 接收到数据
+    connect(serial, &QSerialPort::readyRead, this, [&](){// 接收数据
+        QByteArray data = serial->readAll();// 读取数据
+        DataAnalysis(data.toHex(' '));// 解析收到的指令
+        if(!data.isEmpty())// 接收到数据
         {
-            QString str = ui->DataReceived->toPlainText();  // 返回纯文本
+            QString str = ui->DataReceived->toPlainText();// 返回纯文本
             if (!str.isEmpty()) {
                 str.append('\n');
             }
             ui->DataReceived->setReadOnly(false);
-            ui->DataReceived->append(data.toHex(' ')); // 将数据放入控件中
+            ui->DataReceived->append(data.toHex(' '));// 将数据放入接收窗口
             ui->DataReceived->setReadOnly(true);
         }
     });
-    connect(ui->SendEditBtn1, &QPushButton::clicked, this, [&](){
+    connect(ui->SendEditBtn1, &QPushButton::clicked, this, [&](){// 发送数据
         QString EditText = ui->Edit1->toPlainText();       //获取发送框内容
         // 将发送数据转换为 16 进制数据
         QByteArray byte_data = QString2Hex(EditText);
@@ -94,117 +123,54 @@ void MainWindow::ConnectFun()
         ui->DataSend->append(byte_data.toHex(' '));    //将文本内容放在发送栏中
         ui->DataSend->setReadOnly(true);
         serial->write(byte_data);      // 串口发送数据
-    });    // 发送数据
-    connect(ui->ClearButton, &QPushButton::clicked, this, [&](){    // 清空发送窗口
+    });
+    connect(ui->ClearButton, &QPushButton::clicked, this, [&](){// 清空发送窗口
         ui->DataSend->setReadOnly(false);
         ui->DataSend->setText("");
         ui->DataSend->setReadOnly(true);
     });
-    connect(ui->ClearShowButton, &QPushButton::clicked, this, [&](){    // 清空接收窗口、正确指令信息表格和错误指令窗口
+    connect(ui->ClearShowButton, &QPushButton::clicked, this, [&](){// 清空接收窗口、正确指令信息表格和错误指令窗口
         // 清空接收窗口
         ui->DataReceived->setReadOnly(false);
         ui->DataReceived->setText("");
         ui->DataReceived->setReadOnly(true);
         // 清空表格
+        ui->m_rightInstruction->clearContents();
+        ui->m_rightInstruction->setRowCount(0);
+        ui->m_rightInstruction->setColumnCount(2);
         // 清空错误指令窗口
         ui->m_errorInstruction->setReadOnly(false);
         ui->m_errorInstruction->setPlainText("");
         ui->m_errorInstruction->setReadOnly(true);
     });
     connect(ui->OpenSerialButton, &QPushButton::clicked, this, [&](){// 串口开关
-        if(serial->isOpen()) {// 如果串口打开了，先给他关闭
+        QString str = ui->OpenSerialButton->text();
+        //当前选择的串口名字
+        serial->setPortName(ui->PortBox->currentText());
+        if (QString::compare(str, "打开串口") == 0) {
+            CheckSerial(ui->PortBox->currentText());
+            serial->open(QIODevice::ReadWrite);
+            PermissionUpdate(true);
+        }
+        else {
             serial->clear();
             serial->close();
-            qDebug() << serial->portName() << " 关闭成功";
-            // 关闭状态，按钮显示“打开串口”
-            ui->OpenSerialButton->setText("打开串口");
-
-            // 关闭状态，允许用户操作
-            ui->BaudBox->setDisabled(false);
-            ui->ParityBox->setDisabled(false);
-            ui->BitBox->setDisabled(false);
-            ui->StopBox->setDisabled(false);
-            ui->ControlBox->setDisabled(false);
-            ui->SendEditBtn1->setDisabled(true);
-            // 清空数据
-            ui->DataReceived->setReadOnly(false);
-            ui->DataSend->setReadOnly(false);
-
-            ui->DataReceived->clear();
-            ui->DataSend->clear();
-
-            ui->DataReceived->setReadOnly(true);
-            ui->DataSend->setReadOnly(true);
-        }
-        else    // 如果串口关闭了，先给他打开
-        {
-            //当前选择的串口名字
-            serial->setPortName(ui->PortBox->currentText());
-            //用ReadWrite 的模式尝试打开串口，无法收发数据时，发出警告
-
-            for (int i = 0; i < portName.size(); i++) {
-                if (QString::compare(ui->PortBox->currentText(),portName[i])) {
-                    serial->setPortName(portName[i]);
-                    if (serial->isOpen()) {
-                        qDebug() << "有其他串口已经打开，先关闭其他串口";
-                        serial->clear();
-                        serial->close();
-                    }
-                }
-            }
-
-            //当前选择的串口名字
-            serial->setPortName(ui->PortBox->currentText());
-            //用ReadWrite 的模式尝试打开串口，无法收发数据时，发出警告
-
-            if(!serial->open(QIODevice::ReadWrite))
-            {
-                QMessageBox::warning(this,tr("提示"),tr("串口打开失败!"),QMessageBox::Ok);
-                return;
-            }
-            qDebug() << serial->portName() << " 打开成功";
-            // 打开状态，按钮显示“关闭串口”
-            ui->OpenSerialButton->setText("关闭串口");
-
-            // 打开状态，禁止用户操作
-            ui->BaudBox->setDisabled(true);
-            ui->ParityBox->setDisabled(true);
-            ui->BitBox->setDisabled(true);
-            ui->StopBox->setDisabled(true);
-            ui->ControlBox->setDisabled(true);
-            ui->SendEditBtn1->setDisabled(false);
+            PermissionUpdate(false);
         }
     });
 }
-// ComboBox PortBox 的槽函数：激活串口
+// 串口切换
 void MainWindow::on_PortBox_activated(const QString &arg1)
 {
-    qDebug() << "启动了activated" << arg1;
     serial->setPortName(arg1);
     if (serial->isOpen()) {
-        // 打开状态，按钮显示“关闭串口”
-        ui->OpenSerialButton->setText("关闭串口");
-        // 打开状态，禁止用户操作
-        ui->BaudBox->setDisabled(true);
-        ui->ParityBox->setDisabled(true);
-        ui->BitBox->setDisabled(true);
-        ui->StopBox->setDisabled(true);
-        ui->ControlBox->setDisabled(true);
-        ui->SendEditBtn1->setDisabled(false);
+        PermissionUpdate(false);
     }
     else {
-        // 关闭状态，按钮显示“打开串口”
-        ui->OpenSerialButton->setText("打开串口");
-        // 关闭状态，允许用户操作
-        ui->BaudBox->setDisabled(false);
-        ui->ParityBox->setDisabled(false);
-        ui->BitBox->setDisabled(false);
-        ui->StopBox->setDisabled(false);
-        ui->ControlBox->setDisabled(false);
-        ui->SendEditBtn1->setDisabled(true);
+        PermissionUpdate(true);
     }
 }
-// 字符串转Hex(QByteArray)类型
+// 字符串转 Hex(QByteArray) 类型
 QByteArray MainWindow::QString2Hex(QString hexStr)
 {
     QByteArray senddata;
@@ -243,7 +209,7 @@ QByteArray MainWindow::QString2Hex(QString hexStr)
     senddata.resize(hexdatalen);
     return senddata;
 }
-// 将单个字符串转换为hex
+// 将单个字符串转换为 hex
 char MainWindow::ConvertHexChar(char c)
 {
     if((c >= '0') && (c <= '9'))
@@ -258,58 +224,87 @@ char MainWindow::ConvertHexChar(char c)
 // 数据解析
 void MainWindow::DataAnalysis(QString hexData)
 {
-    qDebug() << "开始分析指令";
-    QStringList rawData = hexData.split(' ');
-    bool ok;
-    if (QString::compare(rawData[0], "fe") == 0) {
-        int dataLen = rawData[1].toUInt(&ok, 16);   // 指令长度
-        if (dataLen + 3 != rawData.size()) {
-            qDebug() << "指令长度出错，丢弃指令";
-            WrongData2Text(hexData);   // 将本条指令写到错误指令 text 中
-        }
-        else {
-            if (QString::compare(rawData[rawData.size() - 1], "ff") != 0) {
-                qDebug() << "指令尾出错，丢弃指令";
-                WrongData2Text(hexData);   // 将本条指令写到错误指令 text 中
+    // 一条指令可能要分多次才可能收全，但是一次只会发一条指令的数据
+    // 假设指令头、指令长度和指令尾三个字节只会有一个出错
+    // 指令尾出错，此情况最为复杂
+
+    rawData.append(hexData.split(' '));// 记录已经接收到的数据
+    if (QString::compare(rawData[0], "fe") == 0) {// 指令头正确
+        if (rawData.size() >= 2) {// 判断指令长度是否接收到
+            bool ok;
+            int dataLen = rawData[1].toUInt(&ok, 16);// 指令长度
+            if (dataLen + 3 < rawData.size()) {// 长度字段必出错
+                if (QString::compare(rawData.back(), "ff") == 0) {// 指令收集全了
+                    qDebug() << "指令长度出错";
+                    WrongData2Text(rawData);// 错误指令写到 text 中
+                }
+            }
+            else if(dataLen + 3 == rawData.size()) {
+                if (QString::compare(rawData.back(), "ff") == 0) {// 指令正确
+                    qDebug() << "指令正确";
+                    RightData2Table(rawData);// 正确指令写到 table 中
+                }
+                else {// 此时可能出现两种情况：1.指令内容出错；2.指令尾出错
+                    // 让程序暂停一段时间，若一直没有收到新的数据，则认为指令尾出错
+                    QTimer::singleShot(3000, this, [this]{// 暂停 3 秒，只会暂停 1 次
+                        // 执行需要暂停的代码
+                        qDebug() << "指令尾出错";
+                        WrongData2Text(rawData);// 错误指令写到 text 中
+                    });
+                }
             }
             else {
-                qDebug() << "指令格式正确";
-                RightData2Table(hexData);  // 将指令按照一定的格式写到表格中
+                if (QString::compare(rawData.back(), "ff") == 0) {// 指令长度必出错
+                    qDebug() << "指令长度出错";
+                    WrongData2Text(rawData);// 错误指令写到 text 中
+                }
             }
         }
     }
-    else {
-        qDebug() << "指令头出错，丢弃指令";
-        WrongData2Text(hexData);   // 将本条指令写到错误指令 text 中
+    else {// 指令头出错
+        if (QString::compare(rawData.back(), "ff") == 0) {// 指令收集全了
+            qDebug() << "指令头出错";
+            WrongData2Text(rawData);// 错误指令写到 text 中
+        }
     }
 }
-// 出错指令写到 text 中
-void MainWindow::WrongData2Text(QString hexData)
+// 将 QStringList 转化为 hex 字符
+QString MainWindow::QStringList2QstringHex(QStringList strList)
 {
-
+    QString str;
+    for (int i = 0; i < strList.size(); i++) {
+        str.append(strList[i]);
+        str.append(' ');
+    }
+    return str;
+}
+// 出错指令写到 text 中
+void MainWindow::WrongData2Text(QStringList strList)
+{
     QString beforeData = ui->m_errorInstruction->toPlainText();// 先读取之前的数据
-    QString wrongData = hexData.append('\n');
+    QString wrongData = QStringList2QstringHex(strList).append('\n');
     ui->m_errorInstruction->setReadOnly(false);
     ui->m_errorInstruction->setPlainText(beforeData.append(wrongData));
     ui->m_errorInstruction->setReadOnly(true);
+    rawData.clear();// 清空 rawData
 }
 // 正确指令信息写到 table 中
-void MainWindow::RightData2Table(QString hexData)
+void MainWindow::RightData2Table(QStringList strList)
 {
-    QStringList rawData = hexData.split(' ');
     bool ok;
-    QString dataLen = QString::number(rawData[1].toUInt(&ok, 16));// 指令长度
-    rawData.removeFirst();
-    rawData.removeFirst();
-    rawData.removeLast();// 指令内容
+    QString dataLen = QString::number(strList[1].toUInt(&ok, 16));// 指令长度
+    strList.removeFirst();
+    strList.removeFirst();
+    strList.removeLast();// 指令内容
     // 向表格中增加新的行
     int row = ui->m_rightInstruction->rowCount();
     ui->m_rightInstruction->insertRow(row);
     ui->m_rightInstruction->setItem(row, 0, new QTableWidgetItem(dataLen));
     QString lastdata;
-    for (int i = 0; i < rawData.size(); i++) {
-        lastdata.append(rawData[i]);
+    for (int i = 0; i < strList.size(); i++) {
+        lastdata.append(strList[i]);
         lastdata.append(' ');
     }
     ui->m_rightInstruction->setItem(row, 1, new QTableWidgetItem(lastdata));// 写进 table
+    rawData.clear();// 清空 rawData
 }
