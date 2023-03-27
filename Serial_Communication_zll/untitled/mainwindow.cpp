@@ -9,14 +9,16 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
-    SerialPortInit();// 串口初始化（参数配置）
+    mCommandHead = "fe";
+    mCommandTail = "ff";
+    SerialPortInit();
 }
 
 MainWindow::~MainWindow()
 {
     delete ui;
 }
-
+// 初始化
 void MainWindow::SerialPortInit()
 {
     serial = new QSerialPort;// 申请内存,并设置父对象
@@ -25,7 +27,6 @@ void MainWindow::SerialPortInit()
     SerialParameterConfiguration();// 参数配置
     PermissionSetting();// 权限设置
     ConnectFun();// 信号
-    rawData.clear();// 清空 QStringList 对象中的内容
 }
 // 获取串口
 void MainWindow::SerialGet()
@@ -82,7 +83,7 @@ void MainWindow::CheckSerial(QString str)
         }
     }
 }
-
+// 权限更新
 void MainWindow::PermissionUpdate(bool select)
 {
     ui->BaudBox->setDisabled(select);
@@ -103,7 +104,6 @@ void MainWindow::ConnectFun()
 {
     connect(serial, &QSerialPort::readyRead, this, [&](){// 接收数据
         QByteArray data = serial->readAll();// 读取数据
-        DataAnalysis(data.toHex(' '));// 解析收到的指令
         if(!data.isEmpty())// 接收到数据
         {
             QString str = ui->ReceivingWindow->toPlainText();// 返回纯文本
@@ -114,10 +114,28 @@ void MainWindow::ConnectFun()
             ui->ReceivingWindow->append(data.toHex(' '));// 将数据放入接收窗口
             ui->ReceivingWindow->setReadOnly(true);
         }
+        mByteArray.append(data.toHex(' ')).append(' ');
+        while (true) {
+            int headIndex = mByteArray.indexOf(mCommandHead);// 帧头
+            if (headIndex >= 0) {// 存在帧头
+                mByteArray.remove(0, headIndex);// 去除帧头之前的无效数据
+                int tailIndex = mByteArray.indexOf(mCommandTail);// 帧尾
+                if (tailIndex > 0) {// 存在帧尾
+                    int lastHeadIndex = mByteArray.left(tailIndex).lastIndexOf(mCommandHead);// 最后一个帧头的索引位置
+                    DataAnalysis(mByteArray.mid(lastHeadIndex, tailIndex - lastHeadIndex + 2));
+                    mByteArray.remove(0, tailIndex + 2);
+                }
+                else {// 不存在帧尾
+                    break;
+                }
+            }
+            else {// 不存在帧头
+                break;
+            }
+        }
     });
     connect(ui->SendButton, &QPushButton::clicked, this, [&](){// 发送数据
         QString EditText = ui->EditWindow->toPlainText();       //获取发送框内容
-        // 将发送数据转换为 16 进制数据
         QByteArray byte_data = QString2Hex(EditText);
         ui->SendWindow->setReadOnly(false);
         ui->SendWindow->append(byte_data.toHex(' '));//将文本内容放在发送栏中
@@ -145,17 +163,30 @@ void MainWindow::ConnectFun()
     });
     connect(ui->SerialSwitchButton, &QPushButton::clicked, this, [&](){// 串口开关
         QString str = ui->SerialSwitchButton->text();
-        //当前选择的串口名字
-        serial->setPortName(ui->PortBox->currentText());
         if (QString::compare(str, "打开串口") == 0) {
             CheckSerial(ui->PortBox->currentText());
+            serial->setPortName(ui->PortBox->currentText());
             serial->open(QIODevice::ReadWrite);
-            PermissionUpdate(true);
+            if (serial->isOpen()) {// 串口打开成功
+                QMessageBox::information(this, "提示", "串口打开成功");
+                PermissionUpdate(true);
+            }
+            else {// 串口打开失败
+                QMessageBox::information(this, "提示", "串口打开失败");
+            }
         }
-        else {
+        else {// 串口关闭成功
+            serial->setPortName(ui->PortBox->currentText());
             serial->clear();
             serial->close();
-            PermissionUpdate(false);
+            if (!serial->isOpen()) {
+                // MessageBox 提示
+                QMessageBox::information(this, "提示", "串口关闭成功");
+                PermissionUpdate(false);
+            }
+            else {// 串口关闭失败
+                QMessageBox::information(this, "提示", "串口关闭失败");
+            }
         }
     });
 }
@@ -221,50 +252,22 @@ char MainWindow::ConvertHexChar(char c)
     else
         return -1;
 }
-// 数据解析
-void MainWindow::DataAnalysis(QString hexData)
+// 解析一条完整的指令
+void MainWindow::DataAnalysis(QByteArray hexData)
 {
-    // 一条指令可能要分多次才可能收全，但是一次只会发一条指令的数据
-    // 假设指令头、指令长度和指令尾三个字节只会有一个出错
-    // 指令尾出错，此情况最为复杂
-
-    rawData.append(hexData.split(' '));// 记录已经接收到的数据
-    if (QString::compare(rawData[0], "fe") == 0) {// 指令头正确
-        if (rawData.size() >= 2) {// 判断指令长度是否接收到
-            bool ok;
-            int dataLen = rawData[1].toUInt(&ok, 16);// 指令长度
-            if (dataLen + 3 < rawData.size()) {// 长度字段必出错
-                if (QString::compare(rawData.back(), "ff") == 0) {// 指令收集全了
-                    qDebug() << "指令长度出错";
-                    WrongData2Text(rawData);// 错误指令写到 text 中
-                }
-            }
-            else if(dataLen + 3 == rawData.size()) {
-                if (QString::compare(rawData.back(), "ff") == 0) {// 指令正确
-                    qDebug() << "指令正确";
-                    RightData2Table(rawData);// 正确指令写到 table 中
-                }
-                else {// 此时可能出现两种情况：1.指令内容出错；2.指令尾出错
-                    // 让程序暂停一段时间，若一直没有收到新的数据，则认为指令尾出错
-                    QTimer::singleShot(3000, this, [this]{// 暂停 3 秒，只会暂停 1 次
-                        // 执行需要暂停的代码
-                        qDebug() << "指令尾出错";
-                        WrongData2Text(rawData);// 错误指令写到 text 中
-                    });
-                }
-            }
-            else {
-                if (QString::compare(rawData.back(), "ff") == 0) {// 指令长度必出错
-                    qDebug() << "指令长度出错";
-                    WrongData2Text(rawData);// 错误指令写到 text 中
-                }
-            }
-        }
+    QString str = hexData;
+    QStringList rawData = str.split(' ');
+    if (rawData.size() <= 3) {
+        WrongData2Text(rawData);
     }
-    else {// 指令头出错
-        if (QString::compare(rawData.back(), "ff") == 0) {// 指令收集全了
-            qDebug() << "指令头出错";
-            WrongData2Text(rawData);// 错误指令写到 text 中
+    else {
+        bool ok;
+        int dataLen = rawData[1].toUInt(&ok, 16);// 指令长度
+        if (dataLen + 3 == rawData.size()) {
+            RightData2Table(rawData);
+        }
+        else {
+            WrongData2Text(rawData);
         }
     }
 }
@@ -286,7 +289,6 @@ void MainWindow::WrongData2Text(QStringList strList)
     ui->WrongDataInfo->setReadOnly(false);
     ui->WrongDataInfo->setPlainText(beforeData.append(wrongData));
     ui->WrongDataInfo->setReadOnly(true);
-    rawData.clear();// 清空 rawData
 }
 // 正确指令信息写到 table 中
 void MainWindow::RightData2Table(QStringList strList)
@@ -306,5 +308,4 @@ void MainWindow::RightData2Table(QStringList strList)
         lastdata.append(' ');
     }
     ui->RightDataInfo->setItem(row, 1, new QTableWidgetItem(lastdata));// 写进 table
-    rawData.clear();// 清空 rawData
 }

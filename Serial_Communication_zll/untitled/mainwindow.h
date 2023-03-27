@@ -29,7 +29,7 @@ public:
     void ConnectFun();// connect 函数
     QByteArray QString2Hex(QString hexStr);// QString 类型转 QByteArray 类型（即 hex 类型）
     char ConvertHexChar(char c);
-    void DataAnalysis(QString hexData);// 指令解析
+    void DataAnalysis(QByteArray hexData);// 指令解析
     QString QStringList2QstringHex(QStringList strList);// 将 QStringList 转化为 hex 字符
     void WrongData2Text(QStringList strList);// 将错误指令写到 text 中
     void RightData2Table(QStringList strList);// 将正确指令写到 table 中
@@ -49,6 +49,8 @@ private:
     QStringList stopBitsList;//停止位
     QStringList flowControlList;//控制流
     QStringList portName;// 记录串口名
-    QStringList rawData;// 记录已经接收到的数据
+    QByteArray mByteArray;//串口数据缓存
+    QByteArray mCommandHead;//指令头
+    QByteArray mCommandTail;//指令尾
 };
 #endif // MAINWINDOW_H
